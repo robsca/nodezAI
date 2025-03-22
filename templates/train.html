@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}Train Model{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Train Model</h2>
+
+<div class="card">
+    <div class="card-body">
+        <div class="alert alert-info mb-4">
+            <i class="fas fa-info-circle"></i>
+            Training will use the most recently downloaded Wikipedia articles. Please make sure you have downloaded articles before training.
+        </div>
+
+        <form id="trainForm">
+            <h4 class="mt-4">Model Configuration</h4>
+            <div class="mb-3">
+                <label for="model_name" class="form-label">Model Name</label>
+                <input type="text" class="form-control" id="model_name" name="model_name" placeholder="e.g., my_model_v1" required>
+                <div class="form-text">Name to save your model with (will be saved as {name}.pth)</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="model_type" class="form-label">Model Type</label>
+                <select class="form-control" id="model_type" name="model_type">
+                    <option value="simple">Simple Transformer</option>
+                    <option value="gpt2">GPT-2</option>
+                </select>
+                <div class="form-text">Select the type of transformer model to train</div>
+            </div>
+
+            <h4 class="mt-4">Model Parameters</h4>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="vocab_size" class="form-label">Vocabulary Size</label>
+                        <input type="number" class="form-control" id="vocab_size" name="vocab_size" value="1000" min="100">
+                        <div class="form-text">Maximum number of unique words in vocabulary</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="n_positions" class="form-label">Maximum Sequence Length</label>
+                        <input type="number" class="form-control" id="n_positions" name="n_positions" value="1024" min="64">
+                        <div class="form-text">Maximum length of input sequences</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="n_embd" class="form-label">Embedding Dimension</label>
+                        <input type="number" class="form-control" id="n_embd" name="n_embd" value="768" min="64">
+                        <div class="form-text">Size of embeddings (d_model for Simple Transformer)</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="n_layer" class="form-label">Number of Layers</label>
+                        <input type="number" class="form-control" id="n_layer" name="n_layer" value="12" min="1">
+                        <div class="form-text">Number of transformer layers</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="n_head" class="form-label">Number of Attention Heads</label>
+                        <input type="number" class="form-control" id="n_head" name="n_head" value="12" min="1">
+                        <div class="form-text">Number of attention heads per layer</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="dropout" class="form-label">Dropout Rate</label>
+                        <input type="number" class="form-control" id="dropout" name="dropout" value="0.1" min="0" max="1" step="0.1">
+                        <div class="form-text">Dropout probability for regularization</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="batch_size" class="form-label">Batch Size</label>
+                        <input type="number" class="form-control" id="batch_size" name="batch_size" value="32" min="1">
+                        <div class="form-text">Number of samples processed together</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="num_epochs" class="form-label">Number of Epochs</label>
+                        <input type="number" class="form-control" id="num_epochs" name="num_epochs" value="10" min="1">
+                        <div class="form-text">Number of complete passes through the training data</div>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Start Training</button>
+        </form>
+
+        <div class="loading mt-4" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Training in progress... This may take a while.</p>
+            <div class="progress mt-3">
+                <div class="progress-bar" role="progressbar"></div>
+            </div>
+        </div>
+
+        <div id="result" class="alert mt-4" style="display: none;">
+            <pre><code id="resultContent"></code></pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Update form fields based on model type
+    $('#model_type').on('change', function() {
+        const isGPT2 = $(this).val() === 'gpt2';
+        
+        // Update default values for GPT2
+        if (isGPT2) {
+            $('#vocab_size').val(50257);
+            $('#n_embd').val(768);
+            $('#n_layer').val(12);
+            $('#n_head').val(12);
+            $('#n_positions').val(1024);
+            $('#dropout').val(0.1);
+        } else {
+            $('#vocab_size').val(1000);
+            $('#n_embd').val(512);
+            $('#n_layer').val(6);
+            $('#n_head').val(8);
+            $('#n_positions').val(50);
+            $('#dropout').val(0.1);
+        }
+    });
+
+    $('#trainForm').on('submit', function(e) {
+        e.preventDefault();
+        
+        // Show loading spinner
+        $('.loading').show();
+        $('#result').hide();
+        
+        // Get form data
+        const formData = {
+            model_name: $('#model_name').val(),
+            model_type: $('#model_type').val(),
+            vocab_size: parseInt($('#vocab_size').val()),
+            n_positions: parseInt($('#n_positions').val()),
+            n_embd: parseInt($('#n_embd').val()),
+            n_layer: parseInt($('#n_layer').val()),
+            n_head: parseInt($('#n_head').val()),
+            dropout: parseFloat($('#dropout').val()),
+            batch_size: parseInt($('#batch_size').val()),
+            num_epochs: parseInt($('#num_epochs').val())
+        };
+        
+        // Start training
+        $.ajax({
+            url: '/api/train',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(formData),
+            success: function(response) {
+                $('#result')
+                    .removeClass('alert-danger')
+                    .addClass('alert-success')
+                    .show();
+                $('#resultContent').text(JSON.stringify(response, null, 2));
+            },
+            error: function(xhr) {
+                let errorMessage;
+                try {
+                    // Try to parse the error response as JSON
+                    const errorResponse = JSON.parse(xhr.responseText);
+                    errorMessage = errorResponse.message || errorResponse.error || 'An unknown error occurred';
+                } catch (e) {
+                    // If parsing fails, use the raw response text
+                    errorMessage = xhr.responseText || 'An unknown error occurred';
+                }
+                
+                $('#result')
+                    .removeClass('alert-success')
+                    .addClass('alert-danger')
+                    .show();
+                $('#resultContent').text(`Error: ${errorMessage}`);
+                
+                // Log the full error details to console for debugging
+                console.error('Training error:', {
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    response: xhr.responseText,
+                    formData: formData
+                });
+            },
+            complete: function() {
+                $('.loading').hide();
+            }
+        });
+    });
+});
+</script>
+{% endblock %} 

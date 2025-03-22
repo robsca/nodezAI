@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+
+{% block title %}Test Model{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Test Model</h2>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">Model Selection</h5>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <label for="modelSelect" class="form-label">Select Model</label>
+            <select class="form-select" id="modelSelect">
+                <option value="">Loading models...</option>
+            </select>
+        </div>
+        <button id="loadModelBtn" class="btn btn-primary" disabled>Load Selected Model</button>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">Model Status</h5>
+    </div>
+    <div class="card-body">
+        <div id="modelStatus">
+            <div class="text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p>Checking model status...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">Generate Text</h5>
+    </div>
+    <div class="card-body">
+        <form id="testForm">
+            <div class="mb-3">
+                <label for="input_text" class="form-label">Input Text</label>
+                <textarea class="form-control" id="input_text" name="input_text" rows="4" placeholder="Enter your text here..."></textarea>
+            </div>
+
+            <div class="mb-3">
+                <label for="max_length" class="form-label">Maximum Output Length</label>
+                <input type="number" class="form-control" id="max_length" name="max_length" value="50" min="1">
+            </div>
+
+            <div class="mb-3">
+                <label for="temperature" class="form-label">Temperature (0.1 - 2.0)</label>
+                <input type="range" class="form-range" id="temperature" name="temperature" min="0.1" max="2" step="0.1" value="1">
+                <span id="temperatureValue">1.0</span>
+            </div>
+
+            <button type="submit" class="btn btn-primary" id="generateBtn" disabled>Generate Text</button>
+        </form>
+
+        <div class="loading mt-4" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Generating text...</p>
+        </div>
+
+        <div id="result" class="alert mt-4" style="display: none;">
+            <h6>Generated Text:</h6>
+            <p id="generatedText" class="mb-0"></p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Function to load available models
+    function loadAvailableModels() {
+        $.ajax({
+            url: '/api/models',
+            method: 'GET',
+            success: function(response) {
+                const select = $('#modelSelect');
+                select.empty();
+                
+                if (response.models && response.models.length > 0) {
+                    select.append('<option value="">Select a model...</option>');
+                    response.models.forEach(model => {
+                        select.append(`<option value="${model}">${model}</option>`);
+                    });
+                    $('#loadModelBtn').prop('disabled', false);
+                } else {
+                    select.append('<option value="">No models available</option>');
+                    $('#loadModelBtn').prop('disabled', true);
+                }
+            },
+            error: function(xhr) {
+                $('#modelSelect').html('<option value="">Error loading models</option>');
+                $('#loadModelBtn').prop('disabled', true);
+            }
+        });
+    }
+
+    // Load models on page load
+    loadAvailableModels();
+
+    // Handle model loading
+    $('#loadModelBtn').click(function() {
+        const selectedModel = $('#modelSelect').val();
+        if (!selectedModel) return;
+
+        // Show loading state
+        $(this).prop('disabled', true);
+        $('#modelStatus').html(`
+            <div class="text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p>Loading model ${selectedModel}...</p>
+            </div>
+        `);
+
+        // Load the selected model
+        $.ajax({
+            url: '/api/load_model',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ model_name: selectedModel }),
+            success: function(response) {
+                // Check model status after loading
+                checkModelStatus();
+            },
+            error: function(xhr) {
+                let errorMessage = "Unknown error occurred";
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    errorMessage = response.error || response.detail?.[0]?.msg || response.message || errorMessage;
+                } catch (e) {
+                    errorMessage = xhr.responseText;
+                }
+                $('#modelStatus').html(`
+                    <div class="alert alert-danger">
+                        <h6 class="alert-heading mb-2">Error Loading Model</h6>
+                        <p class="mb-0">Error: ${errorMessage}</p>
+                    </div>
+                `);
+                $('#generateBtn').prop('disabled', true);
+            },
+            complete: function() {
+                $('#loadModelBtn').prop('disabled', false);
+            }
+        });
+    });
+
+    // Function to check model status
+    function checkModelStatus() {
+        $.ajax({
+            url: '/api/model/status',
+            method: 'GET',
+            success: function(response) {
+                if (response.model_loaded) {
+                    let html = `
+                        <div class="alert alert-success mb-3">
+                            <h6 class="alert-heading mb-2">Model Loaded Successfully</h6>
+                            <p class="mb-0">The model is ready for text generation.</p>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Model Parameters:</h6>
+                                <ul class="list-unstyled">
+                                    <li><strong>Vocabulary Size:</strong> ${response.parameters.num_tokens}</li>
+                                    <li><strong>Model Dimension:</strong> ${response.parameters.d_model}</li>
+                                    <li><strong>Attention Heads:</strong> ${response.parameters.nhead}</li>
+                                    <li><strong>Transformer Layers:</strong> ${response.parameters.num_layers}</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Training Details:</h6>
+                                <ul class="list-unstyled">
+                                    <li><strong>Storage Mode:</strong> ${response.is_test ? 'Local' : 'Cloud Storage'}</li>
+                                    <li><strong>Model File:</strong> ${response.model_file}</li>
+                                    ${response.last_modified ? `<li><strong>Last Updated:</strong> ${new Date(response.last_modified).toLocaleString()}</li>` : ''}
+                                </ul>
+                            </div>
+                        </div>`;
+                    $('#modelStatus').html(html);
+                    $('#generateBtn').prop('disabled', false);
+                } else {
+                    $('#modelStatus').html(`
+                        <div class="alert alert-warning">
+                            <h6 class="alert-heading mb-2">No Model Loaded</h6>
+                            <p class="mb-0">Please select and load a model from the dropdown above, or train a new model.</p>
+                            <hr>
+                            <a href="/train" class="btn btn-primary btn-sm">Go to Training Page</a>
+                        </div>
+                    `);
+                    $('#generateBtn').prop('disabled', true);
+                }
+            },
+            error: function(xhr) {
+                $('#modelStatus').html(`
+                    <div class="alert alert-danger">
+                        <h6 class="alert-heading mb-2">Error Checking Model Status</h6>
+                        <p class="mb-0">Error: ${xhr.responseText}</p>
+                    </div>
+                `);
+                $('#generateBtn').prop('disabled', true);
+            }
+        });
+    }
+
+    // Check model status on page load
+    checkModelStatus();
+
+    // Update temperature value display
+    $('#temperature').on('input', function() {
+        $('#temperatureValue').text($(this).val());
+    });
+
+    $('#testForm').on('submit', function(e) {
+        e.preventDefault();
+        
+        // Show loading spinner
+        $('.loading').show();
+        $('#result').hide();
+        
+        // Get form data
+        const formData = {
+            input_text: $('#input_text').val(),
+            max_length: parseInt($('#max_length').val()),
+            temperature: parseFloat($('#temperature').val())
+        };
+        
+        // Make prediction
+        $.ajax({
+            url: '/api/predict',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(formData),
+            success: function(response) {
+                $('#result')
+                    .removeClass('alert-danger')
+                    .addClass('alert-success')
+                    .show();
+                $('#generatedText').text(response.generated_text);
+            },
+            error: function(xhr) {
+                $('#result')
+                    .removeClass('alert-success')
+                    .addClass('alert-danger')
+                    .show();
+                $('#generatedText').text(xhr.responseText);
+            },
+            complete: function() {
+                $('.loading').hide();
+            }
+        });
+    });
+});
+</script>
+{% endblock %} 
