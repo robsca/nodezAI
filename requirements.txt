@@ -10,3 +10,4 @@ python-multipart
 python-dotenv
 google-cloud-storage
 google-auth
+numpy
