@@ -18,6 +18,9 @@ import pickle
 # Load environment variables
 load_dotenv()
 
+# Set PyTorch memory management settings
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 async def train_model(
     data_path: str,
     model_name: str,
@@ -29,7 +32,7 @@ async def train_model(
     n_layer=12,
     n_head=12,
     dropout=0.1,
-    batch_size=32,
+    batch_size=8,  # Reduced batch size
     num_epochs=10,
     learning_rate=0.001,
     max_samples=None,
@@ -51,6 +54,8 @@ async def train_model(
             dropout=dropout
         )
         model = GPT2(config).to(device)
+        # Enable gradient checkpointing for GPT2
+        model.gradient_checkpointing_enable()
     else:  # simple transformer
         model = SimpleTransformer(
             num_tokens=vocab_size,
@@ -58,6 +63,8 @@ async def train_model(
             nhead=n_head,
             num_layers=n_layer
         ).to(device)
+        # Enable gradient checkpointing for SimpleTransformer
+        model.gradient_checkpointing_enable()
     
     # Load data based on TEST environment variable
     is_test = os.getenv('TEST', 'false').lower() == 'true'
@@ -130,6 +137,10 @@ async def train_model(
                     optimizer.step()
                     
                     total_loss += loss.item()
+                    
+                    # Clear CUDA cache after each batch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                     
                     if batch_idx % 100 == 0:
                         print(f'Epoch {epoch+1}/{num_epochs}, Batch {batch_idx}, Loss: {loss.item():.4f}')
@@ -208,7 +219,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_layer', type=int, default=12, help='Number of transformer layers')
     parser.add_argument('--n_head', type=int, default=12, help='Number of attention heads')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout probability')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--max_samples', type=int, default=None, help='Maximum number of samples to use')
