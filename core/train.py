@@ -54,8 +54,7 @@ async def train_model(
             dropout=dropout
         )
         model = GPT2(config).to(device)
-        # Enable gradient checkpointing for GPT2
-        model.gradient_checkpointing_enable()
+        # No gradient checkpointing for GPT2
     else:  # simple transformer
         model = SimpleTransformer(
             num_tokens=vocab_size,
