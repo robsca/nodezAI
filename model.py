@@ -327,7 +327,7 @@ def prepare_wikipedia_data(output_dir="data/wikipedia", num_articles=1000, min_f
     try:
         dataset, data_preparator = prepare_data(
             texts=texts,
-            vocab_size=50257,  # Standard GPT-2 vocabulary size
+            vocab_size=50257,
             seq_length=block_size,
             min_freq=min_freq
         )
@@ -455,12 +455,13 @@ def select_operation():
         print("1. Training")
         print("2. Get Info")
         print("3. Test Model")
+        print("4. Delete Model")
         
         try:
-            choice = input("\nEnter your choice (1-3): ").strip()
-            if choice in ['1', '2', '3']:
+            choice = input("\nEnter your choice (1-4): ").strip()
+            if choice in ['1', '2', '3', '4']:
                 return int(choice)
-            print("Invalid choice. Please enter 1, 2, or 3.")
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
         except ValueError:
             print("Invalid input. Please enter a number.")
 
@@ -497,6 +498,34 @@ def get_model_info(model_name, models, storage_service):
             print(f"\nError loading model details: {str(e)}")
     
     print("\033[90m----------------------------------------\033[0m")
+
+def delete_model(model_name, models, storage_service):
+    """Delete a model and all its checkpoints from storage"""
+    print(f"\n\033[33mDeleting model: {model_name}\033[0m")
+    print("\033[31mWARNING: This action cannot be undone!\033[0m")
+    print("Are you sure? [Y/N]: ", end='')
+    
+    confirmation = input().strip().upper()
+    if confirmation != 'Y':
+        print("Deletion cancelled.")
+        return
+    
+    model_data = models[model_name]
+    deleted_files = 0
+    
+    # Delete checkpoints
+    for checkpoint in model_data['checkpoints']:
+        if storage_service.delete_model(checkpoint):
+            deleted_files += 1
+            print(f"Deleted checkpoint: {checkpoint}")
+    
+    # Delete final model if it exists
+    if model_data['final_model']:
+        if storage_service.delete_model(model_data['final_model']):
+            deleted_files += 1
+            print(f"Deleted final model: {model_data['final_model']}")
+    
+    print(f"\nSuccessfully deleted {deleted_files} files for model {model_name}")
 
 def generate_text(model, prompt, max_length=100, temperature=0.7):
     """Generate text from the model given a prompt"""
@@ -656,6 +685,9 @@ if __name__ == '__main__':
                 chat_mode(model, model_name)
             else:
                 print(f"\n\033[31mError: Could not load model {model_name}\033[0m")
+                
+        elif operation == 4:  # Delete Model
+            delete_model(model_name, models, storage_service)
         
     except KeyboardInterrupt:
         print("\nOperation interrupted by user.")
