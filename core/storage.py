@@ -15,18 +15,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# get data from cred.yaml
+import yaml
+with open('cred.yaml', 'r') as f:
+    cred_data = yaml.safe_load(f)
+
 cert_dict = {
-    "type": os.getenv("FIREBASE_TYPE"),
-    "project_id": os.getenv("FIREBASE_PROJECT_ID"), 
-    "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-    "private_key": os.getenv('FIREBASE_PRIVATE_KEY').replace('\\n', '\n') if os.getenv('FIREBASE_PRIVATE_KEY') else None,
-    "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-    "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-    "auth_uri": os.getenv("FIREBASE_AUTH_URI"),
-    "token_uri": os.getenv("FIREBASE_TOKEN_URI"),
-    "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
-    "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_X509_CERT_URL"),
-    "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN")
+    "type": "service_account",
+    "project_id": cred_data['FIREBASE_PROJECT_ID'],
+    "private_key_id": cred_data['FIREBASE_PRIVATE_KEY_ID'],
+    "private_key": cred_data['FIREBASE_PRIVATE_KEY='].replace('\\n', '\n'),
+    "client_email": cred_data['FIREBASE_CLIENT_EMAIL'],
+    "client_id": cred_data['FIREBASE_CLIENT_ID'],
+    "auth_uri": cred_data['FIREBASE_AUTH_URI'],
+    "token_uri": cred_data['FIREBASE_TOKEN_URI'], 
+    "auth_provider_x509_cert_url": cred_data['FIREBASE_AUTH_PROVIDER_X509_CERT_URL'],
+    "client_x509_cert_url": cred_data['FIREBASE_CLIENT_X509_CERT_URL'],
+    "universe_domain": cred_data['FIREBASE_UNIVERSE_DOMAIN']
 }
 
 
@@ -37,8 +42,8 @@ class StorageService:
             self.storage_client = storage.Client(
                 credentials=service_account.Credentials.from_service_account_info(cert_dict)
             )
-            self.data_bucket = self.storage_client.bucket(os.getenv("GOOGLE_BUCKET_DATA"))
-            self.model_bucket = self.storage_client.bucket(os.getenv("GOOGLE_BUCKET_MODEL"))
+            self.data_bucket = self.storage_client.bucket(cred_data['GOOGLE_BUCKET_DATA'])
+            self.model_bucket = self.storage_client.bucket(cred_data['GOOGLE_BUCKET_MODEL'])
             logger.info("Storage service initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize storage service: {str(e)}")
@@ -108,3 +113,26 @@ class StorageService:
         except Exception as e:
             logger.error(f"Error listing models: {str(e)}")
             return [] 
+
+    def delete_model(self, filename: str) -> bool:
+        """Delete a model file from the model bucket."""
+        try:
+            blob = self.model_bucket.blob(filename)
+            blob.delete()
+            logger.info(f"Deleted {filename} from model bucket")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting model: {str(e)}")
+            return False
+
+    def delete_data(self, filename: str) -> bool:
+        """Delete a data file from the data bucket."""
+        try:
+            blob = self.data_bucket.blob(filename)
+            blob.delete()
+            logger.info(f"Deleted {filename} from data bucket")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting data: {str(e)}")
+            return False
+        

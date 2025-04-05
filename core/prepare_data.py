@@ -20,7 +20,7 @@ class TextDataset(Dataset):
                 self.sequences[idx + 1:idx + self.seq_length + 1])
 
 class DataPreparator:
-    def __init__(self, vocab_size: int = 1000):
+    def __init__(self, vocab_size: int = 50257):
         self.vocab_size = vocab_size
         self.word_to_idx = {}
         self.idx_to_word = {}
@@ -90,7 +90,7 @@ def prepare_data(
     file_path: Optional[str] = None,
     texts: Optional[List[str]] = None,
     file_type: str = 'txt',
-    vocab_size: int = 1000,
+    vocab_size: int = 50257,
     seq_length: int = 50,
     max_samples: Optional[int] = None,
     min_freq: int = 2
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     file_path = "path/to/your/data.txt"
     dataset, preparator = prepare_data(
         file_path=file_path,
-        vocab_size=1000,
+        vocab_size=50257,
         seq_length=50,
         max_samples=10000
     )
