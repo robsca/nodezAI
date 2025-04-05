@@ -46,7 +46,7 @@ def parse_args():
                       help='Batch size for training (default: 4)')
     return parser.parse_args()
 
-from model import GPT2Config, GPT2, prepare_wikipedia_data
+from model import GPT2Config, GPT2, prepare_wikipedia_data, train
 
 def get_available_models(storage_service):
     """Get list of available models from storage"""
