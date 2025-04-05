@@ -2,6 +2,36 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import time
+from datetime import datetime
+import logging
+import os
+import json
+from torch.utils.data import Dataset, DataLoader
+from core.download_data import WikipediaDownloader
+from core.prepare_data import DataPreparator, prepare_data
+from core.storage import StorageService
+import io
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class WikipediaDataset(Dataset):
+    def __init__(self, data, block_size):
+        self.data = data
+        self.block_size = block_size
+
+    def __len__(self):
+        return len(self.data) - self.block_size
+
+    def __getitem__(self, idx):
+        chunk = self.data[idx:idx + self.block_size + 1]
+        x = torch.tensor(chunk[:-1], dtype=torch.long)
+        y = torch.tensor(chunk[1:], dtype=torch.long)
+        return x, y
 
 class GPT2Config:
     def __init__(
@@ -106,6 +136,10 @@ class GPT2(nn.Module):
         
         self.apply(self._init_weights)
         
+        # Move model to GPU if available
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.to(self.device)
+        
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             module.weight.data.normal_(mean=0.0, std=0.02)
@@ -134,3 +168,180 @@ class GPT2(nn.Module):
         logits = self.head(x)
         
         return logits
+
+def train_step(model, optimizer, data, targets, criterion):
+    start_time = time.time()
+    model.train()
+    optimizer.zero_grad()
+    
+    # Move data to GPU
+    data = data.to(model.device)
+    targets = targets.to(model.device)
+    
+    # Forward pass
+    logits = model(data)
+    # Reshape logits and targets for loss calculation
+    loss = criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
+    
+    # Backward pass
+    loss.backward()
+    optimizer.step()
+    
+    step_time = time.time() - start_time
+    return loss.item(), step_time
+
+def save_checkpoint(model, optimizer, epoch, loss, storage_service, checkpoint_name):
+    """Save model checkpoint to cloud storage"""
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+    }
+    
+    # Save checkpoint to bytes buffer
+    buffer = io.BytesIO()
+    torch.save(checkpoint, buffer)
+    buffer.seek(0)
+    
+    # Upload to cloud storage
+    success = storage_service.save_model(buffer.getvalue(), checkpoint_name)
+    if success:
+        logger.info(f"Checkpoint saved successfully: {checkpoint_name}")
+    else:
+        logger.error(f"Failed to save checkpoint: {checkpoint_name}")
+    
+    return success
+
+def train(model, train_loader, optimizer, criterion, num_epochs, storage_service):
+    start_time = time.time()
+    
+    # Log device information
+    if model.device.type == 'cuda':
+        logger.info(f"Training on GPU: {torch.cuda.get_device_name(0)}")
+        logger.info(f"GPU Memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+        logger.info(f"GPU Memory cached: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
+    else:
+        logger.info("Training on CPU")
+    
+    for epoch in range(num_epochs):
+        epoch_start = time.time()
+        total_loss = 0
+        total_time = 0
+        
+        for batch_idx, (data, targets) in enumerate(train_loader):
+            loss, step_time = train_step(model, optimizer, data, targets, criterion)
+            total_loss += loss
+            total_time += step_time
+            
+            if batch_idx % 100 == 0:
+                logger.info(f'Epoch: {epoch+1}, Batch: {batch_idx}, Loss: {loss:.4f}, Time/batch: {step_time:.3f}s')
+                if model.device.type == 'cuda':
+                    logger.info(f'GPU Memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB')
+                
+                # Save checkpoint every 100 batches
+                checkpoint_name = f'gpt2_checkpoint_e{epoch+1}_b{batch_idx}.pt'
+                save_checkpoint(model, optimizer, epoch, loss, storage_service, checkpoint_name)
+        
+        avg_loss = total_loss / len(train_loader)
+        epoch_time = time.time() - epoch_start
+        logger.info(f'Epoch: {epoch+1}, Average Loss: {avg_loss:.4f}, Epoch Time: {epoch_time:.2f}s')
+        
+        # Save checkpoint at end of each epoch
+        checkpoint_name = f'gpt2_checkpoint_epoch{epoch+1}.pt'
+        save_checkpoint(model, optimizer, epoch, avg_loss, storage_service, checkpoint_name)
+    
+    total_time = time.time() - start_time
+    logger.info(f'Total training time: {total_time:.2f}s')
+    
+    # Save final model
+    final_model_name = 'gpt2_final_model.pt'
+    save_checkpoint(model, optimizer, num_epochs, avg_loss, storage_service, final_model_name)
+
+def prepare_wikipedia_data(output_dir="data/wikipedia", num_articles=1000, min_freq=2, block_size=128, batch_size=4):
+    """Download and prepare Wikipedia data for training"""
+    
+    # Initialize storage service to check for existing data
+    storage_service = StorageService()
+    data_files = storage_service.list_data_files()
+    
+    if data_files:
+        logger.info("Found existing data files, loading from storage...")
+        try:
+            # Load the first available data file
+            articles = storage_service.load_data(data_files[0].split('/')[-1])
+            texts = [article['text'] for article in articles]
+            logger.info(f"Successfully loaded {len(texts)} articles from storage")
+        except Exception as e:
+            logger.error(f"Error loading existing data: {str(e)}")
+            raise
+    else:
+        # Initialize downloader and preparator
+        downloader = WikipediaDownloader(output_dir=output_dir)
+        
+        # Download Wikipedia articles
+        logger.info("No existing data found. Downloading Wikipedia articles...")
+        try:
+            articles = downloader.get_random_articles(num_articles)
+            logger.info(f"Successfully downloaded {len(articles)} articles")
+            texts = [article['text'] for article in articles]
+        except Exception as e:
+            logger.error(f"Error downloading articles: {str(e)}")
+            raise
+    
+    # Prepare data using the prepare_data function
+    logger.info("Preparing data...")
+    try:
+        dataset, data_preparator = prepare_data(
+            texts=texts,
+            vocab_size=1000,
+            seq_length=block_size,
+            min_freq=min_freq
+        )
+        logger.info(f"Successfully prepared data with vocabulary size {len(data_preparator.vocab)}")
+    except Exception as e:
+        logger.error(f"Error preparing data: {str(e)}")
+        raise
+    
+    # Create dataloader
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    return dataloader, data_preparator
+
+if __name__ == '__main__':
+    start_time = time.time()
+    logger.info(f'Training started at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    
+    # Initialize storage service
+    storage_service = StorageService()
+    
+    # Prepare Wikipedia data
+    train_loader, data_preparator = prepare_wikipedia_data(
+        num_articles=1000,
+        min_freq=2,
+        block_size=128,
+        batch_size=4
+    )
+    
+    # Initialize model with vocabulary size from data_preparator
+    config = GPT2Config(
+        vocab_size=len(data_preparator.vocab),
+        n_positions=1024,
+        n_embd=768,
+        n_layer=12,
+        n_head=12,
+        dropout=0.1
+    )
+    model = GPT2(config)
+    
+    # Initialize optimizer and loss function
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.CrossEntropyLoss()
+    
+    # Train the model
+    train(model, train_loader, optimizer, criterion, num_epochs=1, storage_service=storage_service)
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    logger.info(f'Training completed at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    logger.info(f'Total execution time: {total_time:.2f}s')
